@@ -241,7 +241,8 @@ namespace sjtu {
     class deque {
     public:
         int total_size;
-        template <typename dataType, size_t BlockSize = 512>
+        static constexpr int BlockSize = 512;
+        template <typename dataType>
         struct Node {
             dataType *data[BlockSize];
             int start;
@@ -250,6 +251,36 @@ namespace sjtu {
             Node() : start(BlockSize / 2), end(BlockSize / 2) {
                 for (int i = 0; i < BlockSize; ++i)
                     data[i] = nullptr;
+            }
+
+            Node(const Node &other) : start(other.start), end(other.end) {
+                for (int i = 0; i < BlockSize; ++i)
+                    data[i] = nullptr;
+                for (int i = start; i < end; ++i) {
+                    if (other.data[i] != nullptr)
+                        data[i] = new dataType(*other.data[i]);
+                }
+            }
+
+            Node &operator=(const Node &other) {
+                if (this == &other)
+                    return *this;
+
+                for (int i = start; i < end; ++i) {
+                    delete data[i];
+                    data[i] = nullptr;
+                }
+
+                start = other.start;
+                end = other.end;
+
+                for (int i = 0; i < BlockSize; ++i)
+                    data[i] = nullptr;
+                for (int i = start; i < end; ++i) {
+                    if (other.data[i] != nullptr)
+                        data[i] = new dataType(*other.data[i]);
+                }
+                return *this;
             }
 
             ~Node() {
@@ -262,18 +293,18 @@ namespace sjtu {
             bool is_full() const { return end == BlockSize && start == 0; }
             bool is_empty() const { return start == end; }
 
-            bool insert_tail(const dataType &val) {
+            bool insert_tail(const dataType &value) {
                 if (end == BlockSize)
                     return false;
-                data[end] = new dataType(val);
+                data[end] = new dataType(value);
                 ++end;
                 return true;
             }
 
-            bool insert_head(const dataType &val) {
+            bool insert_head(const dataType &value) {
                 if (start == 0)
                     return false;
-                data[--start] = new dataType(val);
+                data[--start] = new dataType(value);
                 return true;
             }
 
@@ -285,7 +316,36 @@ namespace sjtu {
 
             void delete_head() {
                 delete data[start];
+                data[start] = nullptr;
                 ++start;
+            }
+
+            void insert_backward(int pos, const dataType &value) {
+                for (int i = start; i < pos; i += 1)
+                    data[i - 1] = data[i];
+                data[pos - 1] = new dataType(value);
+                --start;
+            }
+
+            void insert_forward(int pos, const dataType &value) {
+                for (int i = end - 1; i >= pos; i -= 1)
+                    data[i + 1] = data[i];
+                data[pos] = new dataType(value);
+                ++end;
+            }
+
+            void delete_pos(int pos) {
+                if (pos - start < end - pos) {
+                    for (int i = pos; i > start; --i)
+                        data[i] = data[i - 1];
+                    data[start] = nullptr;
+                    delete_head();
+                } else {
+                    for (int i = pos; i < end - 1; ++i)
+                        data[i] = data[i + 1];
+                    data[end - 1] = nullptr;
+                    delete_tail();
+                }
             }
         };
         double_list<Node<T>> array;
@@ -294,6 +354,9 @@ namespace sjtu {
 
         class const_iterator;
         class iterator {
+            friend class deque<T>;
+            friend class const_iterator;
+
         private:
             /**
              * add data members.
@@ -499,6 +562,9 @@ namespace sjtu {
              * you can copy them, but with care!
              * and it should be able to be constructed from an iterator.
              */
+            friend class deque<T>;
+            friend class iterator;
+
         private:
             /**
              * add data members.
@@ -722,7 +788,8 @@ namespace sjtu {
          * assignment operator.
          */
         deque &operator=(const deque &other) {
-            array.clear();
+            if (this == &other)
+                return *this;
             array = other.array;
             total_size = other.total_size;
             return *this;
@@ -813,7 +880,69 @@ namespace sjtu {
          * return an iterator pointing to the inserted value.
          * throw if the iterator is invalid or it points to a wrong place.
          */
-        iterator insert(iterator pos, const T &value) {}
+        iterator insert(iterator pos, const T &value) {
+            if (pos.owner != this)
+                throw invalid_iterator();
+
+            if (pos.block == array.end()) {
+                if (pos.index != 0)
+                    throw invalid_iterator();
+                push_back(value);
+                iterator ret = end();
+                --ret;
+                return ret;
+            }
+
+            if (pos.index < pos.block->start || pos.index > pos.block->end)
+                throw invalid_iterator();
+            ++total_size;
+            int beg = pos.block->start, now_pos = pos.index, end = pos.block->end;
+            if (beg > 0) {
+                pos.block->insert_backward(now_pos, value);
+                --pos.index;
+                return pos;
+            } else if (end < BlockSize) {
+                pos.block->insert_forward(now_pos, value);
+                return pos;
+            } else {
+                Node<T> new_node;
+                for (int i = BlockSize / 2; i < BlockSize; i += 1) {
+                    new_node.insert_tail(*(pos.block->data[i]));
+                }
+                for (int i = BlockSize / 2; i < BlockSize; i += 1) {
+                    pos.block->delete_tail();
+                }
+                using OuterNode = typename double_list<Node<T>>::Node;
+                OuterNode *cur_wrap = pos.block.iter;
+                OuterNode *nxt_wrap = cur_wrap->nxt;
+                OuterNode *new_wrap = new OuterNode(new_node, cur_wrap, nxt_wrap);
+                cur_wrap->nxt = new_wrap;
+                nxt_wrap->pre = new_wrap;
+                ++array.cur_size;
+
+                if (now_pos < BlockSize / 2) {
+                    if (pos.block->start > 0) {
+                        pos.block->insert_backward(now_pos, value);
+                        --pos.index;
+                        return pos;
+                    } else {
+                        pos.block->insert_forward(now_pos, value);
+                        return pos;
+                    }
+                } else {
+                    list_iterator new_block = new_wrap;
+                    int new_pos = new_block->start + (now_pos - BlockSize / 2);
+
+                    if (new_block->start > 0) {
+                        new_block->insert_backward(new_pos, value);
+                        return iterator(this, new_block, new_pos - 1);
+                    } else {
+                        new_block->insert_forward(new_pos, value);
+                        return iterator(this, new_block, new_pos);
+                    }
+                }
+            }
+        }
 
         /**
          * remove the element at pos.
@@ -821,7 +950,36 @@ namespace sjtu {
          * the last element, return end(). throw if the container is empty,
          * the iterator is invalid, or it points to a wrong place.
          */
-        iterator erase(iterator pos) {}
+        iterator erase(iterator pos) {
+            if (empty())
+                throw container_is_empty();
+            if (pos.owner != this || pos.block == array.end())
+                throw invalid_iterator();
+            if (pos.index < pos.block->start || pos.index >= pos.block->end)
+                throw invalid_iterator();
+
+            iterator ret = pos;
+            ++ret;
+
+            pos.block->delete_pos(pos.index);
+            --total_size;
+
+            if (pos.block->is_empty()) {
+                using OuterNode = typename double_list<Node<T>>::Node;
+                OuterNode *cur_wrap = pos.block.iter;
+                OuterNode *nxt_wrap = cur_wrap->nxt;
+
+                array.remove_node(cur_wrap);
+                delete cur_wrap;
+
+                if (nxt_wrap == array.tail)
+                    return end();
+                list_iterator nxt_block = nxt_wrap;
+                return iterator(this, nxt_block, nxt_block->start);
+            }
+
+            return ret;
+        }
 
         /**
          * add an element to the end.
