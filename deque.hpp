@@ -335,22 +335,24 @@ namespace sjtu {
             }
 
             void delete_pos(int pos) {
+                delete data[pos];
                 if (pos - start < end - pos) {
                     for (int i = pos; i > start; --i)
                         data[i] = data[i - 1];
                     data[start] = nullptr;
-                    delete_head();
+                    ++start;
                 } else {
                     for (int i = pos; i < end - 1; ++i)
                         data[i] = data[i + 1];
-                    data[end - 1] = nullptr;
-                    delete_tail();
+                    --end;
+                    data[end] = nullptr;
                 }
             }
         };
         double_list<Node<T>> array;
 
         using list_iterator = typename double_list<Node<T>>::iterator;
+        using OuterNode = typename double_list<Node<T>>::Node;
 
         class const_iterator;
         class iterator {
@@ -365,15 +367,16 @@ namespace sjtu {
             deque<T> *owner;
             list_iterator block;
             int index;
+            int rank;
 
         public:
-            iterator() : owner(nullptr), block(), index(0) {}
+            iterator() : owner(nullptr), block(), index(0), rank(0) {}
 
-            iterator(deque<T> *o, const list_iterator &b, int i)
-                : owner(o), block(b), index(i) {}
+            iterator(deque<T> *o, const list_iterator &b, int i, int r)
+                : owner(o), block(b), index(i), rank(r) {}
 
             iterator(const iterator &rhs)
-                : owner(rhs.owner), block(rhs.block), index(rhs.index) {}
+                : owner(rhs.owner), block(rhs.block), index(rhs.index), rank(rhs.rank) {}
 
             iterator &operator=(const iterator &rhs) {
                 if (this == &rhs)
@@ -381,22 +384,88 @@ namespace sjtu {
                 owner = rhs.owner;
                 block = rhs.block;
                 index = rhs.index;
+                rank = rhs.rank;
                 return *this;
             }
             ~iterator() {}
+
+            iterator jump_forward(const int &n) const {
+                if (owner == nullptr)
+                    throw invalid_iterator();
+                if (block == owner->array.end())
+                    throw invalid_iterator();
+                OuterNode *cur_wrap = this->block.iter;
+                OuterNode *nxt_wrap = cur_wrap->nxt;
+                int cnt = n;
+                if (index + cnt < cur_wrap->val->end)
+                    return iterator(owner, block, index + cnt, rank + cnt);
+                cnt -= block->end - index - 1;
+                cur_wrap = nxt_wrap, nxt_wrap = cur_wrap->nxt;
+                while (cnt > 0) {
+                    if (cur_wrap == owner->array.tail)
+                        throw invalid_iterator();
+                    if (cnt > cur_wrap->val->end - cur_wrap->val->start) {
+                        cnt -= cur_wrap->val->end - cur_wrap->val->start;
+                        cur_wrap = nxt_wrap, nxt_wrap = cur_wrap->nxt;
+                    } else {
+                        int new_index = cur_wrap->val->start + cnt - 1;
+                        list_iterator new_block = cur_wrap;
+                        return iterator(owner, new_block, new_index, rank + n);
+                    }
+                }
+
+                throw invalid_iterator();
+            }
+
+            iterator jump_backward(const int &n) const {
+                if (owner == nullptr)
+                    throw invalid_iterator();
+                OuterNode *cur_wrap;
+                int pos;
+                if (block == owner->array.end()) {
+                    cur_wrap = owner->array.tail->pre;
+                    if (cur_wrap == owner->array.head)
+                        throw invalid_iterator();
+                    pos = cur_wrap->val->end;
+                } else {
+                    cur_wrap = block.iter;
+                    pos = index;
+                }
+                OuterNode *pre_wrap = cur_wrap->pre;
+                int cnt = n;
+                if (pos - cnt >= cur_wrap->val->start) {
+                    list_iterator new_block = cur_wrap;
+                    return iterator(owner, new_block, pos - cnt, rank - cnt);
+                }
+                cnt -= pos - cur_wrap->val->start;
+                cur_wrap = pre_wrap, pre_wrap = cur_wrap->pre;
+                while (cnt > 0) {
+                    if (cur_wrap == owner->array.head)
+                        throw invalid_iterator();
+                    if (cnt > cur_wrap->val->end - cur_wrap->val->start) {
+                        cnt -= cur_wrap->val->end - cur_wrap->val->start;
+                        cur_wrap = pre_wrap, pre_wrap = cur_wrap->pre;
+                    } else {
+                        int new_index = cur_wrap->val->end - cnt;
+                        list_iterator new_block = cur_wrap;
+                        return iterator(owner, new_block, new_index, rank - n);
+                    }
+                }
+                throw invalid_iterator();
+            }
+
             /**
              * return a new iterator which points to the n-next element.
              * if there are not enough elements, the behaviour is undefined.
              * same for operator-.
              */
             iterator operator+(const int &n) const {
-                int cnt = n;
-                iterator tmp = *this;
-                while (cnt > 0)
-                    ++tmp, --cnt;
-                while (cnt < 0)
-                    --tmp, ++cnt;
-                return tmp;
+                if (n == 0)
+                    return *this;
+                else if (n > 0)
+                    return jump_forward(n);
+                else
+                    return jump_backward(-n);
             }
             iterator operator-(const int &n) const {
                 return *this + (-n);
@@ -410,39 +479,15 @@ namespace sjtu {
             int operator-(const iterator &rhs) const {
                 if (owner == nullptr || rhs.owner == nullptr || owner != rhs.owner)
                     throw invalid_iterator();
-
-                if (*this == rhs)
-                    return 0;
-
-                int dist = 0;
-                iterator cur = rhs;
-                iterator ed = owner->end();
-
-                while (cur != ed) {
-                    ++cur;
-                    ++dist;
-                    if (cur == *this)
-                        return dist;
-                }
-
-                dist = 0;
-                cur = *this;
-                while (cur != ed) {
-                    ++cur;
-                    ++dist;
-                    if (cur == rhs)
-                        return -dist;
-                }
-
-                throw invalid_iterator();
+                return rank - rhs.rank;
             }
             iterator &operator+=(const int &n) {
-                int cnt = n;
-                while (cnt > 0)
-                    ++(*this), --cnt;
-                while (cnt < 0)
-                    --(*this), ++cnt;
-                return *this;
+                if (n == 0)
+                    return *this;
+                else if (n > 0)
+                    return *this = jump_forward(n);
+                else
+                    return *this = jump_backward(-n);
             }
             iterator &operator-=(const int &n) {
                 return (*this) += (-n);
@@ -463,6 +508,7 @@ namespace sjtu {
                 if (owner == nullptr || block == owner->array.end())
                     throw invalid_iterator();
 
+                ++rank;
                 int blockEnd = block->end;
                 if (index + 1 < blockEnd) {
                     ++index;
@@ -492,6 +538,7 @@ namespace sjtu {
                 if (owner == nullptr)
                     throw invalid_iterator();
 
+                --rank;
                 if (block == owner->array.end()) {
                     if (owner->array.empty())
                         throw invalid_iterator();
@@ -573,18 +620,19 @@ namespace sjtu {
             const deque<T> *owner;
             list_iterator block;
             int index;
+            int rank;
 
         public:
-            const_iterator() : owner(nullptr), block(), index(0) {}
+            const_iterator() : owner(nullptr), block(), index(0), rank(0) {}
 
-            const_iterator(const deque<T> *o, const list_iterator &b, int i)
-                : owner(o), block(b), index(i) {}
+            const_iterator(const deque<T> *o, const list_iterator &b, int i, int r)
+                : owner(o), block(b), index(i), rank(r) {}
 
             const_iterator(const const_iterator &rhs)
-                : owner(rhs.owner), block(rhs.block), index(rhs.index) {}
+                : owner(rhs.owner), block(rhs.block), index(rhs.index), rank(rhs.rank) {}
 
             const_iterator(const iterator &rhs)
-                : owner(rhs.owner), block(rhs.block), index(rhs.index) {}
+                : owner(rhs.owner), block(rhs.block), index(rhs.index), rank(rhs.rank) {}
 
             const_iterator &operator=(const iterator &rhs) {
                 if (this == &rhs)
@@ -592,22 +640,87 @@ namespace sjtu {
                 owner = rhs.owner;
                 block = rhs.block;
                 index = rhs.index;
+                rank = rhs.rank;
                 return *this;
             }
             ~const_iterator() {}
+
+            const_iterator jump_forward(const int &n) const {
+                if (owner == nullptr)
+                    throw invalid_iterator();
+                if (block == owner->array.end())
+                    throw invalid_iterator();
+                OuterNode *cur_wrap = this->block.iter;
+                OuterNode *nxt_wrap = cur_wrap->nxt;
+                int cnt = n;
+                if (index + cnt < cur_wrap->val->end)
+                    return const_iterator(owner, block, index + cnt, rank + cnt);
+                cnt -= block->end - index - 1;
+                cur_wrap = nxt_wrap, nxt_wrap = cur_wrap->nxt;
+                while (cnt > 0) {
+                    if (cur_wrap == owner->array.tail)
+                        throw invalid_iterator();
+                    if (cnt > cur_wrap->val->end - cur_wrap->val->start) {
+                        cnt -= cur_wrap->val->end - cur_wrap->val->start;
+                        cur_wrap = nxt_wrap, nxt_wrap = cur_wrap->nxt;
+                    } else {
+                        int new_index = cur_wrap->val->start + cnt - 1;
+                        list_iterator new_block = cur_wrap;
+                        return const_iterator(owner, new_block, new_index, rank + n);
+                    }
+                }
+
+                throw invalid_iterator();
+            }
+
+            const_iterator jump_backward(const int &n) const {
+                if (owner == nullptr)
+                    throw invalid_iterator();
+                OuterNode *cur_wrap;
+                int pos;
+                if (block == owner->array.end()) {
+                    cur_wrap = owner->array.tail->pre;
+                    if (cur_wrap == owner->array.head)
+                        throw invalid_iterator();
+                    pos = cur_wrap->val->end;
+                } else {
+                    cur_wrap = block.iter;
+                    pos = index;
+                }
+                OuterNode *pre_wrap = cur_wrap->pre;
+                int cnt = n;
+                if (pos - cnt >= cur_wrap->val->start) {
+                    list_iterator new_block = cur_wrap;
+                    return const_iterator(owner, new_block, pos - cnt, rank - cnt);
+                }
+                cnt -= pos - cur_wrap->val->start;
+                cur_wrap = pre_wrap, pre_wrap = cur_wrap->pre;
+                while (cnt > 0) {
+                    if (cur_wrap == owner->array.head)
+                        throw invalid_iterator();
+                    if (cnt > cur_wrap->val->end - cur_wrap->val->start) {
+                        cnt -= cur_wrap->val->end - cur_wrap->val->start;
+                        cur_wrap = pre_wrap, pre_wrap = cur_wrap->pre;
+                    } else {
+                        int new_index = cur_wrap->val->end - cnt;
+                        list_iterator new_block = cur_wrap;
+                        return const_iterator(owner, new_block, new_index, rank - n);
+                    }
+                }
+                throw invalid_iterator();
+            }
             /**
              * return a new iterator which points to the n-next element.
              * if there are not enough elements, the behaviour is undefined.
              * same for operator-.
              */
             const_iterator operator+(const int &n) const {
-                int cnt = n;
-                const_iterator tmp = *this;
-                while (cnt > 0)
-                    ++tmp, --cnt;
-                while (cnt < 0)
-                    --tmp, ++cnt;
-                return tmp;
+                if (n == 0)
+                    return *this;
+                else if (n > 0)
+                    return jump_forward(n);
+                else
+                    return jump_backward(-n);
             }
             const_iterator operator-(const int &n) const {
                 return *this + (-n);
@@ -621,39 +734,15 @@ namespace sjtu {
             int operator-(const const_iterator &rhs) const {
                 if (owner == nullptr || rhs.owner == nullptr || owner != rhs.owner)
                     throw invalid_iterator();
-
-                if (*this == rhs)
-                    return 0;
-
-                int dist = 0;
-                const_iterator cur = rhs;
-                const_iterator ed = owner->end();
-
-                while (cur != ed) {
-                    ++cur;
-                    ++dist;
-                    if (cur == *this)
-                        return dist;
-                }
-
-                dist = 0;
-                cur = *this;
-                while (cur != ed) {
-                    ++cur;
-                    ++dist;
-                    if (cur == rhs)
-                        return -dist;
-                }
-
-                throw invalid_iterator();
+                return rank - rhs.rank;
             }
             const_iterator &operator+=(const int &n) {
-                int cnt = n;
-                while (cnt > 0)
-                    ++(*this), --cnt;
-                while (cnt < 0)
-                    --(*this), ++cnt;
-                return *this;
+                if (n == 0)
+                    return *this;
+                else if (n > 0)
+                    return *this = jump_forward(n);
+                else
+                    return *this = jump_backward(-n);
             }
             const_iterator &operator-=(const int &n) {
                 return (*this) += (-n);
@@ -674,6 +763,7 @@ namespace sjtu {
                 if (owner == nullptr || block == owner->array.end())
                     throw invalid_iterator();
 
+                ++rank;
                 int blockEnd = block->end;
                 if (index + 1 < blockEnd) {
                     ++index;
@@ -703,6 +793,7 @@ namespace sjtu {
                 if (owner == nullptr)
                     throw invalid_iterator();
 
+                --rank;
                 if (block == owner->array.end()) {
                     if (owner->array.empty())
                         throw invalid_iterator();
@@ -838,23 +929,23 @@ namespace sjtu {
             if (array.empty())
                 return end();
             list_iterator b = array.begin();
-            return iterator(this, b, (*b).start);
+            return iterator(this, b, (*b).start, 0);
         }
         const_iterator cbegin() const {
             if (array.empty())
                 return cend();
             list_iterator b = array.begin();
-            return const_iterator(this, b, (*b).start);
+            return const_iterator(this, b, (*b).start, 0);
         }
 
         /**
          * return an iterator to the end.
          */
         iterator end() {
-            return iterator(this, array.end(), 0);
+            return iterator(this, array.end(), 0, total_size);
         }
         const_iterator cend() const {
-            return const_iterator(this, array.end(), 0);
+            return const_iterator(this, array.end(), 0, total_size);
         }
 
         /**
@@ -896,7 +987,7 @@ namespace sjtu {
             if (pos.index < pos.block->start || pos.index > pos.block->end)
                 throw invalid_iterator();
             ++total_size;
-            int beg = pos.block->start, now_pos = pos.index, end = pos.block->end;
+            int beg = pos.block->start, now_pos = pos.index, end = pos.block->end, ins_rank = pos.rank;
             if (beg > 0) {
                 pos.block->insert_backward(now_pos, value);
                 --pos.index;
@@ -912,7 +1003,6 @@ namespace sjtu {
                 for (int i = BlockSize / 2; i < BlockSize; i += 1) {
                     pos.block->delete_tail();
                 }
-                using OuterNode = typename double_list<Node<T>>::Node;
                 OuterNode *cur_wrap = pos.block.iter;
                 OuterNode *nxt_wrap = cur_wrap->nxt;
                 OuterNode *new_wrap = new OuterNode(new_node, cur_wrap, nxt_wrap);
@@ -935,10 +1025,10 @@ namespace sjtu {
 
                     if (new_block->start > 0) {
                         new_block->insert_backward(new_pos, value);
-                        return iterator(this, new_block, new_pos - 1);
+                        return iterator(this, new_block, new_pos - 1, ins_rank);
                     } else {
                         new_block->insert_forward(new_pos, value);
-                        return iterator(this, new_block, new_pos);
+                        return iterator(this, new_block, new_pos, ins_rank);
                     }
                 }
             }
@@ -958,14 +1048,14 @@ namespace sjtu {
             if (pos.index < pos.block->start || pos.index >= pos.block->end)
                 throw invalid_iterator();
 
-            iterator ret = pos;
-            ++ret;
+            list_iterator old_block = pos.block;
+            int old_index = pos.index;
+            int old_rank = pos.rank;
 
             pos.block->delete_pos(pos.index);
             --total_size;
 
             if (pos.block->is_empty()) {
-                using OuterNode = typename double_list<Node<T>>::Node;
                 OuterNode *cur_wrap = pos.block.iter;
                 OuterNode *nxt_wrap = cur_wrap->nxt;
 
@@ -975,10 +1065,13 @@ namespace sjtu {
                 if (nxt_wrap == array.tail)
                     return end();
                 list_iterator nxt_block = nxt_wrap;
-                return iterator(this, nxt_block, nxt_block->start);
+                return iterator(this, nxt_block, nxt_block->start, old_rank);
+            } else {
+                if (old_index >= old_block->end) {
+                    old_index = old_block->end - 1;
+                }
+                return iterator(this, old_block, old_index, old_rank);
             }
-
-            return ret;
         }
 
         /**
