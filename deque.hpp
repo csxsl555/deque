@@ -399,21 +399,32 @@ namespace sjtu {
                 int cnt = n;
                 if (index + cnt < cur_wrap->val->end)
                     return iterator(owner, block, index + cnt, rank + cnt);
-                cnt -= block->end - index - 1;
+                cnt -= block->end - index;
                 cur_wrap = nxt_wrap, nxt_wrap = cur_wrap->nxt;
+                if (cnt == 0) {
+                    if (cur_wrap == owner->array.tail)
+                        return owner->end();
+                    else
+                        return iterator(owner, cur_wrap, cur_wrap->val->start, rank + n);
+                }
                 while (cnt > 0) {
                     if (cur_wrap == owner->array.tail)
                         throw invalid_iterator();
-                    if (cnt > cur_wrap->val->end - cur_wrap->val->start) {
+                    if (cnt >= cur_wrap->val->end - cur_wrap->val->start) {
                         cnt -= cur_wrap->val->end - cur_wrap->val->start;
                         cur_wrap = nxt_wrap, nxt_wrap = cur_wrap->nxt;
+                        if (cnt == 0) {
+                            if (cur_wrap == owner->array.tail)
+                                return owner->end();
+                            else
+                                return iterator(owner, cur_wrap, cur_wrap->val->start, rank + n);
+                        }
                     } else {
-                        int new_index = cur_wrap->val->start + cnt - 1;
+                        int new_index = cur_wrap->val->start + cnt;
                         list_iterator new_block = cur_wrap;
                         return iterator(owner, new_block, new_index, rank + n);
                     }
                 }
-
                 throw invalid_iterator();
             }
 
@@ -437,16 +448,28 @@ namespace sjtu {
                     list_iterator new_block = cur_wrap;
                     return iterator(owner, new_block, pos - cnt, rank - cnt);
                 }
-                cnt -= pos - cur_wrap->val->start;
+                cnt -= pos - cur_wrap->val->start + 1;
                 cur_wrap = pre_wrap, pre_wrap = cur_wrap->pre;
+                if (cnt == 0) {
+                    if (cur_wrap == owner->array.head)
+                        return owner->begin();
+                    else
+                        return iterator(owner, cur_wrap, cur_wrap->val->end - 1, rank - n);
+                }
                 while (cnt > 0) {
                     if (cur_wrap == owner->array.head)
                         throw invalid_iterator();
-                    if (cnt > cur_wrap->val->end - cur_wrap->val->start) {
+                    if (cnt >= cur_wrap->val->end - cur_wrap->val->start) {
                         cnt -= cur_wrap->val->end - cur_wrap->val->start;
                         cur_wrap = pre_wrap, pre_wrap = cur_wrap->pre;
+                        if (cnt == 0) {
+                            if (cur_wrap == owner->array.head)
+                                return owner->begin();
+                            else
+                                return iterator(owner, cur_wrap, cur_wrap->val->end - 1, rank - n);
+                        }
                     } else {
-                        int new_index = cur_wrap->val->end - cnt;
+                        int new_index = cur_wrap->val->end - 1 - cnt;
                         list_iterator new_block = cur_wrap;
                         return iterator(owner, new_block, new_index, rank - n);
                     }
@@ -578,7 +601,7 @@ namespace sjtu {
                 if (owner == nullptr || block == owner->array.end())
                     return nullptr;
                 if (index < block->start || index >= block->end)
-                    throw invalid_iterator();
+                    return nullptr;
                 return block->data[index];
             }
 
@@ -655,21 +678,32 @@ namespace sjtu {
                 int cnt = n;
                 if (index + cnt < cur_wrap->val->end)
                     return const_iterator(owner, block, index + cnt, rank + cnt);
-                cnt -= block->end - index - 1;
+                cnt -= block->end - index;
                 cur_wrap = nxt_wrap, nxt_wrap = cur_wrap->nxt;
+                if (cnt == 0) {
+                    if (cur_wrap == owner->array.tail)
+                        return owner->cend();
+                    else
+                        return const_iterator(owner, cur_wrap, cur_wrap->val->start, rank + n);
+                }
                 while (cnt > 0) {
                     if (cur_wrap == owner->array.tail)
                         throw invalid_iterator();
-                    if (cnt > cur_wrap->val->end - cur_wrap->val->start) {
+                    if (cnt >= cur_wrap->val->end - cur_wrap->val->start) {
                         cnt -= cur_wrap->val->end - cur_wrap->val->start;
                         cur_wrap = nxt_wrap, nxt_wrap = cur_wrap->nxt;
+                        if (cnt == 0) {
+                            if (cur_wrap == owner->array.tail)
+                                return owner->cend();
+                            else
+                                return const_iterator(owner, cur_wrap, cur_wrap->val->start, rank + n);
+                        }
                     } else {
-                        int new_index = cur_wrap->val->start + cnt - 1;
+                        int new_index = cur_wrap->val->start + cnt;
                         list_iterator new_block = cur_wrap;
                         return const_iterator(owner, new_block, new_index, rank + n);
                     }
                 }
-
                 throw invalid_iterator();
             }
 
@@ -693,16 +727,28 @@ namespace sjtu {
                     list_iterator new_block = cur_wrap;
                     return const_iterator(owner, new_block, pos - cnt, rank - cnt);
                 }
-                cnt -= pos - cur_wrap->val->start;
+                cnt -= pos - cur_wrap->val->start + 1;
                 cur_wrap = pre_wrap, pre_wrap = cur_wrap->pre;
+                if (cnt == 0) {
+                    if (cur_wrap == owner->array.head)
+                        return owner->cbegin();
+                    else
+                        return const_iterator(owner, cur_wrap, cur_wrap->val->end, rank - n);
+                }
                 while (cnt > 0) {
                     if (cur_wrap == owner->array.head)
                         throw invalid_iterator();
-                    if (cnt > cur_wrap->val->end - cur_wrap->val->start) {
+                    if (cnt >= cur_wrap->val->end - cur_wrap->val->start) {
                         cnt -= cur_wrap->val->end - cur_wrap->val->start;
                         cur_wrap = pre_wrap, pre_wrap = cur_wrap->pre;
+                        if (cnt == 0) {
+                            if (cur_wrap == owner->array.head)
+                                return owner->cbegin();
+                            else
+                                return const_iterator(owner, cur_wrap, cur_wrap->val->end - 1, rank - n);
+                        }
                     } else {
-                        int new_index = cur_wrap->val->end - cnt;
+                        int new_index = cur_wrap->val->end - 1 - cnt;
                         list_iterator new_block = cur_wrap;
                         return const_iterator(owner, new_block, new_index, rank - n);
                     }
@@ -833,7 +879,7 @@ namespace sjtu {
                 if (owner == nullptr || block == owner->array.end())
                     return nullptr;
                 if (index < block->start || index >= block->end)
-                    throw invalid_iterator();
+                    return nullptr;
                 return block->data[index];
             }
 
@@ -891,15 +937,23 @@ namespace sjtu {
          * throw index_out_of_bound if out of bound.
          */
         T &at(const size_t &pos) {
+            if (pos >= total_size)
+                throw index_out_of_bound();
             return *(this->begin() + pos);
         }
         const T &at(const size_t &pos) const {
+            if (pos >= total_size)
+                throw index_out_of_bound();
             return *(this->cbegin() + pos);
         }
         T &operator[](const size_t &pos) {
+            if (pos >= total_size)
+                throw index_out_of_bound();
             return this->at(pos);
         }
         const T &operator[](const size_t &pos) const {
+            if (pos >= total_size)
+                throw index_out_of_bound();
             return this->at(pos);
         }
 
@@ -1051,6 +1105,9 @@ namespace sjtu {
             list_iterator old_block = pos.block;
             int old_index = pos.index;
             int old_rank = pos.rank;
+            int old_start = old_block->start;
+            int old_end = old_block->end;
+            bool shift_from_left = (old_index - old_start < old_end - old_index);
 
             pos.block->delete_pos(pos.index);
             --total_size;
@@ -1067,10 +1124,17 @@ namespace sjtu {
                 list_iterator nxt_block = nxt_wrap;
                 return iterator(this, nxt_block, nxt_block->start, old_rank);
             } else {
-                if (old_index >= old_block->end) {
-                    old_index = old_block->end - 1;
+                int candidate_index = old_index + (shift_from_left ? 1 : 0);
+                if (candidate_index < old_block->end)
+                    return iterator(this, old_block, candidate_index, old_rank);
+                else {
+                    OuterNode *cur_wrap = pos.block.iter;
+                    OuterNode *nxt_wrap = cur_wrap->nxt;
+                    if (nxt_wrap == array.tail)
+                        return end();
+                    list_iterator nxt_block = nxt_wrap;
+                    return iterator(this, nxt_block, nxt_block->start, old_rank);
                 }
-                return iterator(this, old_block, old_index, old_rank);
             }
         }
 
