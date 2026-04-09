@@ -4,6 +4,7 @@
 #include "exceptions.hpp"
 
 #include <cstddef>
+#include <cmath>
 
 namespace sjtu {
     template <class T>
@@ -241,20 +242,24 @@ namespace sjtu {
     class deque {
     public:
         int total_size;
-        static constexpr int BlockSize = 512;
+        static constexpr int min_block_cap = 64;
+        static constexpr int max_block_cap = 2048;
         template <typename dataType>
         struct Node {
-            dataType *data[BlockSize];
+            dataType **data;
             int start;
             int end;
+            int cap;
 
-            Node() : start(BlockSize / 2), end(BlockSize / 2) {
-                for (int i = 0; i < BlockSize; ++i)
+            Node(int c) : start(c / 2), end(c / 2), cap(c) {
+                data = new dataType *[cap];
+                for (int i = 0; i < cap; ++i)
                     data[i] = nullptr;
             }
 
-            Node(const Node &other) : start(other.start), end(other.end) {
-                for (int i = 0; i < BlockSize; ++i)
+            Node(const Node &other) : cap(other.cap), start(other.start), end(other.end) {
+                data = new dataType *[cap];
+                for (int i = 0; i < cap; ++i)
                     data[i] = nullptr;
                 for (int i = start; i < end; ++i) {
                     if (other.data[i] != nullptr)
@@ -270,11 +275,14 @@ namespace sjtu {
                     delete data[i];
                     data[i] = nullptr;
                 }
+                delete[] data;
 
                 start = other.start;
                 end = other.end;
+                cap = other.cap;
+                data = new dataType *[cap];
 
-                for (int i = 0; i < BlockSize; ++i)
+                for (int i = 0; i < cap; ++i)
                     data[i] = nullptr;
                 for (int i = start; i < end; ++i) {
                     if (other.data[i] != nullptr)
@@ -287,14 +295,33 @@ namespace sjtu {
                 for (int i = start; i < end; ++i) {
                     delete data[i];
                 }
+                delete[] data;
             }
 
             int size() const { return end - start; }
-            bool is_full() const { return end == BlockSize && start == 0; }
+            bool is_full() const { return end == cap && start == 0; }
             bool is_empty() const { return start == end; }
+            int left_space() const { return start; }
+            int right_space() const { return cap - end; }
+
+            void recenter() {
+                int sz = size();
+                int new_start = (cap - sz) / 2;
+                if (new_start == start)
+                    return;
+                dataType **new_data = new dataType *[cap];
+                for (int i = 0; i < cap; ++i)
+                    new_data[i] = nullptr;
+                for (int i = 0; i < sz; ++i)
+                    new_data[new_start + i] = data[start + i];
+                delete[] data;
+                data = new_data;
+                start = new_start;
+                end = new_start + sz;
+            }
 
             bool insert_tail(const dataType &value) {
-                if (end == BlockSize)
+                if (end == cap)
                     return false;
                 data[end] = new dataType(value);
                 ++end;
@@ -354,6 +381,139 @@ namespace sjtu {
         using list_iterator = typename double_list<Node<T>>::iterator;
         using OuterNode = typename double_list<Node<T>>::Node;
 
+        int choose_block_cap() const {
+            int n = total_size > 0 ? total_size : 1;
+            int cap = static_cast<int>(std::sqrt(static_cast<double>(n))) * 2;
+            if (cap < min_block_cap) cap = min_block_cap;
+            if (cap > max_block_cap) cap = max_block_cap;
+            if (cap % 2 == 1) ++cap;
+            return cap;
+        }
+
+
+        int min_block_size() const {
+            int low = choose_block_cap() / 2;
+            if (low < 16)
+                low = 16;
+            return low;
+        }
+
+        bool ensure_insert_tail(list_iterator it, const T &value) {
+            if (it->insert_tail(value))
+                return true;
+            it->recenter();
+            return it->insert_tail(value);
+        }
+
+        bool ensure_insert_head(list_iterator it, const T &value) {
+            if (it->insert_head(value))
+                return true;
+            it->recenter();
+            return it->insert_head(value);
+        }
+
+        bool merge_with_next(list_iterator left_block) {
+            if (left_block == array.end())
+                return false;
+            OuterNode *right_wrap = left_block.iter->nxt;
+            if (right_wrap == array.tail)
+                return false;
+
+            list_iterator right_block = right_wrap;
+            int left_size = left_block->size();
+            int right_size = right_block->size();
+            int merge_limit = choose_block_cap();
+            if (left_size + right_size > merge_limit)
+                return false;
+
+            int total = left_size + right_size;
+            int new_cap = merge_limit;
+            if (new_cap < min_block_cap)
+                new_cap = min_block_cap;
+            if (new_cap > max_block_cap)
+                new_cap = max_block_cap;
+            if (new_cap < total)
+                new_cap = total;
+
+            Node<T> merged(new_cap);
+            int base = (new_cap - total) / 2;
+            merged.start = base;
+            merged.end = base;
+
+            for (int i = left_block->start; i < left_block->end; ++i)
+                merged.insert_tail(*(left_block->data[i]));
+            for (int i = right_block->start; i < right_block->end; ++i)
+                merged.insert_tail(*(right_block->data[i]));
+
+            *left_block = merged;
+            array.remove_node(right_wrap);
+            delete right_wrap;
+            return true;
+        }
+        void rebalance_with_next(list_iterator cur_block) {
+            if (cur_block == array.end())
+                return;
+            OuterNode *next_wrap = cur_block.iter->nxt;
+            if (next_wrap == array.tail)
+                return;
+
+            list_iterator next_block = next_wrap;
+            int low = min_block_size();
+            while (cur_block->size() < low && next_block->size() > low) {
+                if (!ensure_insert_tail(cur_block, *(next_block->data[next_block->start])))
+                    break;
+                next_block->delete_head();
+            }
+            if (next_block->is_empty()) {
+                array.remove_node(next_wrap);
+                delete next_wrap;
+            }
+        }
+
+        void rebalance_with_prev(list_iterator cur_block) {
+            if (cur_block == array.end())
+                return;
+            OuterNode *prev_wrap = cur_block.iter->pre;
+            if (prev_wrap == array.head)
+                return;
+
+            list_iterator prev_block = prev_wrap;
+            int low = min_block_size();
+            while (cur_block->size() < low && prev_block->size() > low) {
+                if (!ensure_insert_head(cur_block, *(prev_block->data[prev_block->end - 1])))
+                    break;
+                prev_block->delete_tail();
+            }
+            if (prev_block->is_empty()) {
+                array.remove_node(prev_wrap);
+                delete prev_wrap;
+            }
+        }
+
+        void maintain_after_erase(OuterNode *hint_wrap) {
+            if (hint_wrap == nullptr || hint_wrap == array.head || hint_wrap == array.tail)
+                return;
+            if (array.cur_size <= 1)
+                return;
+
+            list_iterator cur_block = hint_wrap;
+            int low = min_block_size();
+            if (cur_block->size() >= low)
+                return;
+
+            if (merge_with_next(cur_block))
+                return;
+
+            OuterNode *prev_wrap = cur_block.iter->pre;
+            if (prev_wrap != array.head) {
+                list_iterator prev_block = prev_wrap;
+                if (merge_with_next(prev_block))
+                    return;
+            }
+
+            rebalance_with_next(cur_block);
+            rebalance_with_prev(cur_block);
+        }
         class const_iterator;
         class iterator {
             friend class deque<T>;
@@ -733,7 +893,7 @@ namespace sjtu {
                     if (cur_wrap == owner->array.head)
                         return owner->cbegin();
                     else
-                        return const_iterator(owner, cur_wrap, cur_wrap->val->end, rank - n);
+                        return const_iterator(owner, cur_wrap, cur_wrap->val->end - 1, rank - n);
                 }
                 while (cnt > 0) {
                     if (cur_wrap == owner->array.head)
@@ -828,7 +988,7 @@ namespace sjtu {
              * iter--
              */
             const_iterator operator--(int) {
-                iterator tmp = *this;
+                const_iterator tmp = *this;
                 --(*this);
                 return tmp;
             }
@@ -1028,35 +1188,36 @@ namespace sjtu {
         iterator insert(iterator pos, const T &value) {
             if (pos.owner != this)
                 throw invalid_iterator();
+            int ins_rank = pos.rank;
 
             if (pos.block == array.end()) {
-                if (pos.index != 0)
+                if (pos.index != 0 || ins_rank != total_size)
                     throw invalid_iterator();
                 push_back(value);
-                iterator ret = end();
-                --ret;
-                return ret;
+                return begin() + ins_rank;
             }
 
             if (pos.index < pos.block->start || pos.index > pos.block->end)
                 throw invalid_iterator();
+
             ++total_size;
-            int beg = pos.block->start, now_pos = pos.index, end = pos.block->end, ins_rank = pos.rank;
+            int beg = pos.block->start;
+            int now_pos = pos.index;
+            int end = pos.block->end;
+            int old_cap = pos.block->cap;
+
             if (beg > 0) {
                 pos.block->insert_backward(now_pos, value);
-                --pos.index;
-                return pos;
-            } else if (end < BlockSize) {
+            } else if (end < old_cap) {
                 pos.block->insert_forward(now_pos, value);
-                return pos;
             } else {
-                Node<T> new_node;
-                for (int i = BlockSize / 2; i < BlockSize; i += 1) {
+                int mid = old_cap / 2;
+                Node<T> new_node(old_cap);
+                for (int i = mid; i < old_cap; ++i)
                     new_node.insert_tail(*(pos.block->data[i]));
-                }
-                for (int i = BlockSize / 2; i < BlockSize; i += 1) {
+                for (int i = mid; i < old_cap; ++i)
                     pos.block->delete_tail();
-                }
+
                 OuterNode *cur_wrap = pos.block.iter;
                 OuterNode *nxt_wrap = cur_wrap->nxt;
                 OuterNode *new_wrap = new OuterNode(new_node, cur_wrap, nxt_wrap);
@@ -1064,28 +1225,22 @@ namespace sjtu {
                 nxt_wrap->pre = new_wrap;
                 ++array.cur_size;
 
-                if (now_pos < BlockSize / 2) {
-                    if (pos.block->start > 0) {
+                if (now_pos < mid) {
+                    if (pos.block->start > 0)
                         pos.block->insert_backward(now_pos, value);
-                        --pos.index;
-                        return pos;
-                    } else {
+                    else
                         pos.block->insert_forward(now_pos, value);
-                        return pos;
-                    }
                 } else {
                     list_iterator new_block = new_wrap;
-                    int new_pos = new_block->start + (now_pos - BlockSize / 2);
-
-                    if (new_block->start > 0) {
+                    int new_pos = new_block->start + (now_pos - mid);
+                    if (new_block->start > 0)
                         new_block->insert_backward(new_pos, value);
-                        return iterator(this, new_block, new_pos - 1, ins_rank);
-                    } else {
+                    else
                         new_block->insert_forward(new_pos, value);
-                        return iterator(this, new_block, new_pos, ins_rank);
-                    }
                 }
             }
+
+            return begin() + ins_rank;
         }
 
         /**
@@ -1102,12 +1257,8 @@ namespace sjtu {
             if (pos.index < pos.block->start || pos.index >= pos.block->end)
                 throw invalid_iterator();
 
-            list_iterator old_block = pos.block;
-            int old_index = pos.index;
-            int old_rank = pos.rank;
-            int old_start = old_block->start;
-            int old_end = old_block->end;
-            bool shift_from_left = (old_index - old_start < old_end - old_index);
+            int ret_rank = pos.rank;
+            OuterNode *hint_wrap = nullptr;
 
             pos.block->delete_pos(pos.index);
             --total_size;
@@ -1115,27 +1266,24 @@ namespace sjtu {
             if (pos.block->is_empty()) {
                 OuterNode *cur_wrap = pos.block.iter;
                 OuterNode *nxt_wrap = cur_wrap->nxt;
+                OuterNode *pre_wrap = cur_wrap->pre;
 
                 array.remove_node(cur_wrap);
                 delete cur_wrap;
 
-                if (nxt_wrap == array.tail)
-                    return end();
-                list_iterator nxt_block = nxt_wrap;
-                return iterator(this, nxt_block, nxt_block->start, old_rank);
+                if (nxt_wrap != array.tail)
+                    hint_wrap = nxt_wrap;
+                else if (pre_wrap != array.head)
+                    hint_wrap = pre_wrap;
             } else {
-                int candidate_index = old_index + (shift_from_left ? 1 : 0);
-                if (candidate_index < old_block->end)
-                    return iterator(this, old_block, candidate_index, old_rank);
-                else {
-                    OuterNode *cur_wrap = pos.block.iter;
-                    OuterNode *nxt_wrap = cur_wrap->nxt;
-                    if (nxt_wrap == array.tail)
-                        return end();
-                    list_iterator nxt_block = nxt_wrap;
-                    return iterator(this, nxt_block, nxt_block->start, old_rank);
-                }
+                hint_wrap = pos.block.iter;
             }
+
+            maintain_after_erase(hint_wrap);
+
+            if (ret_rank >= total_size)
+                return end();
+            return begin() + ret_rank;
         }
 
         /**
@@ -1143,14 +1291,14 @@ namespace sjtu {
          */
         void push_back(const T &value) {
             if (array.empty())
-                array.insert_tail(Node<T>());
+                array.insert_tail(Node<T>(choose_block_cap()));
             list_iterator it = array.end();
             --it;
-            if (!(*it).insert_tail(value)) {
-                array.insert_tail(Node<T>());
+            if (!ensure_insert_tail(it, value)) {
+                array.insert_tail(Node<T>(choose_block_cap()));
                 it = array.end();
                 --it;
-                (*it).insert_tail(value);
+                ensure_insert_tail(it, value);
             }
             ++total_size;
         }
@@ -1164,10 +1312,20 @@ namespace sjtu {
                 throw container_is_empty();
             list_iterator it = array.end();
             --it;
-            (*it).delete_tail();
-            if ((*it).is_empty())
-                array.delete_tail();
+            OuterNode *hint_wrap = it.iter;
+            it->delete_tail();
+            if (it->is_empty()) {
+                OuterNode *cur_wrap = it.iter;
+                OuterNode *pre_wrap = cur_wrap->pre;
+                array.remove_node(cur_wrap);
+                delete cur_wrap;
+                if (pre_wrap == array.head)
+                    hint_wrap = nullptr;
+                else
+                    hint_wrap = pre_wrap;
+            }
             --total_size;
+            maintain_after_erase(hint_wrap);
         }
 
         /**
@@ -1175,12 +1333,12 @@ namespace sjtu {
          */
         void push_front(const T &value) {
             if (array.empty())
-                array.insert_head(Node<T>());
+                array.insert_head(Node<T>(choose_block_cap()));
             list_iterator it = array.begin();
-            if (!(*it).insert_head(value)) {
-                array.insert_head(Node<T>());
+            if (!ensure_insert_head(it, value)) {
+                array.insert_head(Node<T>(choose_block_cap()));
                 it = array.begin();
-                (*it).insert_head(value);
+                ensure_insert_head(it, value);
             }
             ++total_size;
         }
@@ -1193,10 +1351,20 @@ namespace sjtu {
             if (total_size == 0)
                 throw container_is_empty();
             list_iterator it = array.begin();
-            (*it).delete_head();
-            if ((*it).is_empty())
-                array.delete_head();
+            OuterNode *hint_wrap = it.iter;
+            it->delete_head();
+            if (it->is_empty()) {
+                OuterNode *cur_wrap = it.iter;
+                OuterNode *next_wrap = cur_wrap->nxt;
+                array.remove_node(cur_wrap);
+                delete cur_wrap;
+                if (next_wrap == array.tail)
+                    hint_wrap = nullptr;
+                else
+                    hint_wrap = next_wrap;
+            }
             --total_size;
+            maintain_after_erase(hint_wrap);
         }
     };
 
